@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: urbanpulse
+      POSTGRES_PASSWORD: urbanpulse
+      POSTGRES_DB: urbanpulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urbanpulse"]
+      interval: 3s
+      retries: 20
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: { context: ., dockerfile: api/Dockerfile }
+    env_file:
+      - .env.example
+      - path: .env
+        required: false
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
+    ports: ["8000:8000"]
+
+  worker:                       # escale com: docker compose up --scale worker=3
+    build: { context: ., dockerfile: api/Dockerfile }
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env.example
+      - path: .env
+        required: false
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
+
+  nodes:                        # gateway de borda: telemetria da rede de sensores
+    build: { context: ., dockerfile: api/Dockerfile }
+    command: ["python", "-m", "app.emulator"]
+    environment:
+      API_URL: http://api:8000
+    env_file:
+      - .env.example
+      - path: .env
+        required: false
+    depends_on: [api, worker]
+
+volumes:
+  pgdata:
+  redisdata:
